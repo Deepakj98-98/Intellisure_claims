@@ -1,0 +1,16 @@
+{
+  "_comment": "Reference data for the Cross-Lens Reconciliation Agent's fraud-signal check. NPIs not listed default to baseline risk (no flag). This is a deliberate rules-based stub for hackathon MVP scope, not a trained model.",
+  "watchlist": {
+    "1999999991": {
+      "risk_reason": "Billing volume 4.2x specialty peer average over trailing 90 days",
+      "base_risk_score": 72
+    },
+    "1999999992": {
+      "risk_reason": "Multiple claims flagged for upcoding in the last 12 months",
+      "base_risk_score": 85
+    }
+  },
+  "high_value_threshold_usd": 5000,
+  "high_value_addon_score": 15,
+  "fraud_score_review_threshold": 70
+}

@@ -15,12 +15,22 @@ export default function App() {
   const fileInputRef = useRef(null);
   const stepperIntervalRef = useRef(null);
 
+  // UPDATED PIPELINE — added Cross-Lens Reconciliation (step 5) and the
+  // Execution/Notification layer (step 6). Cross-Lens is the step that
+  // catches contradictions between Policy Validation and Adjudication
+  // (e.g. "covered" but prior-authorization is missing) that neither
+  // agent alone would flag — see backend/cross_lens.py for the full
+  // reasoning. Execution is what actually ACTS on the final decision
+  // (sends an approval/rejection notification) rather than the
+  // pipeline just deciding and stopping.
   const steps = [
     { id: 1, name: 'S3 Upload & PDF Parse', desc: 'Uploading PDF to Amazon S3 & extracting text contents' },
     { id: 2, name: 'Claim Intake Agent', desc: 'Parsing raw text into structured claim data and metadata' },
     { id: 3, name: 'Policy Validation Agent', desc: 'Checking insurance policy details, coverages, and exceptions' },
     { id: 4, name: 'Adjudication Agent', desc: 'Evaluating rules to decide approve/deny/exception status' },
-    { id: 5, name: 'Audit Agent', desc: 'Performing quality assurance checks and assessing compliance' }
+    { id: 5, name: 'Cross-Lens Reconciliation', desc: 'Checking Policy + Adjudication together for contradictions (e.g. covered but prior-auth missing)' },
+    { id: 6, name: 'Execution Agent', desc: 'Sending the approval/rejection notification and recording the action taken' },
+    { id: 7, name: 'Audit Agent', desc: 'Final compliance & QA pass over the complete claim trail' }
   ];
 
   // Clean up interval on unmount
@@ -383,7 +393,7 @@ export default function App() {
                   <span className="text-sm font-bold text-slate-200">{file?.name}</span>
                 </div>
                 <div className="flex items-center space-x-3 mt-1">
-                  <span className="text-xs text-slate-500">Processed successfully via 4 Bedrock agents</span>
+                  <span className="text-xs text-slate-500">Processed via 6 agents (incl. Cross-Lens Reconciliation)</span>
                 </div>
               </div>
               
@@ -419,6 +429,74 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {/* ROUTING DECISION BANNER — the human-review visual state.
+                This is the single most important thing on this screen:
+                it tells the viewer, at a glance, whether Cross-Lens
+                Reconciliation found a contradiction that overrides
+                Adjudication's raw decision. Color and icon change
+                based on results.routing_decision, which is always
+                present regardless of which pipeline stage the claim
+                actually reached (see backend/app.py's _final_response). */}
+            {results.routing_decision && (
+              <div
+                className={`rounded-2xl p-5 border flex items-center space-x-4 ${
+                  results.routing_decision === 'AUTO_APPROVED'
+                    ? 'bg-emerald-500/10 border-emerald-500/30'
+                    : results.routing_decision === 'NEEDS_HUMAN_REVIEW'
+                    ? 'bg-amber-500/10 border-amber-500/30'
+                    : 'bg-rose-500/10 border-rose-500/30'
+                }`}
+              >
+                <div
+                  className={`h-11 w-11 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                    results.routing_decision === 'AUTO_APPROVED'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : results.routing_decision === 'NEEDS_HUMAN_REVIEW'
+                      ? 'bg-amber-500/20 text-amber-400'
+                      : 'bg-rose-500/20 text-rose-400'
+                  }`}
+                >
+                  {results.routing_decision === 'AUTO_APPROVED' ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  ) : results.routing_decision === 'NEEDS_HUMAN_REVIEW' ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  )}
+                </div>
+                <div>
+                  <p
+                    className={`font-bold text-lg ${
+                      results.routing_decision === 'AUTO_APPROVED'
+                        ? 'text-emerald-400'
+                        : results.routing_decision === 'NEEDS_HUMAN_REVIEW'
+                        ? 'text-amber-400'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {results.routing_decision === 'AUTO_APPROVED' && 'Auto-Approved'}
+                    {results.routing_decision === 'NEEDS_HUMAN_REVIEW' && 'Flagged for Human Review'}
+                    {results.routing_decision === 'MISSING_INFORMATION' && 'Missing Information'}
+                  </p>
+                  <p className="text-sm text-slate-400 mt-0.5">
+                    {results.routing_decision === 'AUTO_APPROVED' &&
+                      'Cross-Lens Reconciliation found no contradictions — this claim was approved automatically.'}
+                    {results.routing_decision === 'NEEDS_HUMAN_REVIEW' &&
+                      (results.cross_lens?.disagreement_reasons?.[0] ||
+                        'This claim requires examiner sign-off before a final decision is made.')}
+                    {results.routing_decision === 'MISSING_INFORMATION' &&
+                      (results.failure_reason || 'Required information could not be extracted from the submitted document.')}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Error fallback in results view */}
             {error && (
@@ -522,7 +600,124 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Card 4: Audit Summary */}
+              {/* Card 4: Cross-Lens Reconciliation — THE differentiator card.
+                  Styled amber/rose when a disagreement was found, so it's
+                  visually distinct from the "everything's fine" green/sky
+                  cards even before reading any text. */}
+              <div className="glassmorphism rounded-2xl p-6 border border-slate-800 shadow-xl flex flex-col min-h-[380px]">
+                <div className="flex justify-between items-center pb-4 border-b border-slate-800 mb-6">
+                  <div className="flex items-center space-x-3">
+                    <div
+                      className={`h-9 w-9 rounded-lg border flex items-center justify-center ${
+                        results.cross_lens?.disagreement_found
+                          ? 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                          : 'bg-violet-500/10 border-violet-500/20 text-violet-400'
+                      }`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0018 4.5h-2.25m-7.5 0h7.5m-7.5 0V21m7.5-16.5V21" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-100">Cross-Lens Reconciliation</h3>
+                      <p className="text-xs text-slate-400">Contradiction check across Policy + Adjudication</p>
+                    </div>
+                  </div>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                      results.cross_lens?.disagreement_found
+                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                        : 'bg-violet-500/10 text-violet-400 border-violet-500/20'
+                    }`}
+                  >
+                    {results.cross_lens?.disagreement_found ? 'Disagreement Found' : 'Consistent'}
+                  </span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto max-h-[300px] pr-1">
+                  {viewMode === 'json' ? (
+                    <pre className="text-xs font-mono bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-emerald-400 overflow-x-auto whitespace-pre-wrap">
+                      {JSON.stringify(results.cross_lens, null, 2)}
+                    </pre>
+                  ) : results.cross_lens?.disagreement_found ? (
+                    <ul className="space-y-3">
+                      {(results.cross_lens.disagreement_reasons || []).map((reason, idx) => (
+                        <li key={idx} className="text-sm text-rose-300 bg-rose-500/5 border border-rose-500/10 rounded-lg p-3">
+                          {reason}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-sm text-slate-400">
+                      <p className="mb-2">No contradictions found across the following checks:</p>
+                      <ul className="list-disc list-inside space-y-1 text-slate-500">
+                        {(results.cross_lens?.checks_performed || []).map((check, idx) => (
+                          <li key={idx}>{check.replace(/_/g, ' ')}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Card 5: Execution — the notification the pipeline
+                  actually SENT (or mocked) as a result of the final
+                  decision. This is what proves the pipeline ACTS, not
+                  just decides. */}
+              <div className="glassmorphism rounded-2xl p-6 border border-slate-800 shadow-xl flex flex-col min-h-[380px]">
+                <div className="flex justify-between items-center pb-4 border-b border-slate-800 mb-6">
+                  <div className="flex items-center space-x-3">
+                    <div className="h-9 w-9 rounded-lg bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-100">Execution — Notification</h3>
+                      <p className="text-xs text-slate-400">Action taken on the final decision</p>
+                    </div>
+                  </div>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                      results.notification?.send_status === 'SENT_VIA_SES'
+                        ? 'bg-teal-500/10 text-teal-400 border-teal-500/20'
+                        : results.notification?.send_status === 'MOCKED_NOT_SENT'
+                        ? 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                        : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                    }`}
+                  >
+                    {results.notification?.send_status === 'SENT_VIA_SES' && 'Sent (SES)'}
+                    {results.notification?.send_status === 'MOCKED_NOT_SENT' && 'Mocked (not sent)'}
+                    {results.notification?.send_status === 'SES_SEND_FAILED' && 'Send Failed'}
+                    {!results.notification?.send_status && 'Unknown'}
+                  </span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto max-h-[300px] pr-1">
+                  {viewMode === 'json' ? (
+                    <pre className="text-xs font-mono bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-emerald-400 overflow-x-auto whitespace-pre-wrap">
+                      {JSON.stringify(results.notification, null, 2)}
+                    </pre>
+                  ) : (
+                    <div className="text-sm space-y-3">
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Recipient</p>
+                        <p className="text-slate-300">{results.notification?.recipient || 'n/a'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Subject</p>
+                        <p className="text-slate-300">{results.notification?.subject || 'n/a'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Body</p>
+                        <p className="text-slate-400 whitespace-pre-wrap">{results.notification?.body || 'n/a'}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Card 6: Audit Summary */}
               <div className="glassmorphism rounded-2xl p-6 border border-slate-800 shadow-xl flex flex-col min-h-[380px]">
                 <div className="flex justify-between items-center pb-4 border-b border-slate-800 mb-6">
                   <div className="flex items-center space-x-3">

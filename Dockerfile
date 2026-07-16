@@ -1,4 +1,12 @@
 # ==========================================
+# WHAT THIS FILE IS FOR: this Dockerfile is used by AWS CodeBuild
+# (see buildspec.yml) to package the backend into a container image
+# and push it to Amazon ECR — it is the CI/CD packaging step, not a
+# tool for local development. For local development, use a native
+# Python venv (see backend/README.md's "Running Locally" section) —
+# it's faster to iterate in and matches exactly what you're actually
+# testing when you run the pipeline against sample claims.
+# ==========================================
 # Stage 1: Build dependencies
 # ==========================================
 FROM python:3.12-slim AS builder
