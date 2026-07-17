@@ -1,5 +1,16 @@
 version: '3.8'
 
+# ==========================================
+# OPTIONAL CONVENIENCE FILE — NOT the primary local dev workflow, and
+# NOT used anywhere in the actual AWS deployment path (that's Dockerfile
+# + buildspec.yml -> ECR -> ECS Express Mode/App Runner -> Amplify, see
+# DEPLOYMENT.md). This file exists only if you want a one-command way
+# to spin up both services without setting up a Python venv or running
+# `npm install` yourself. For day-to-day development and debugging,
+# use the native venv + npm workflow in backend/README.md — it's
+# faster to iterate in (no image rebuild on every code change) and
+# it's what the Dev Environment & Git Handbook walks through.
+# ==========================================
 services:
   backend:
     build:

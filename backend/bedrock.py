@@ -1,3 +1,34 @@
+"""
+bedrock.py — Wrappers around Amazon Bedrock Agent invocations.
+
+UPDATED PIPELINE CONTEXT (see app.py and README.md for the full
+picture): this module still only wraps the FOUR Bedrock Agents that
+existed originally — Claim Intake, Policy Validation, Adjudication,
+Audit. The two NEW stages (Cross-Lens Reconciliation and Execution)
+are deliberately NOT full Bedrock Agents:
+
+- Cross-Lens Reconciliation (cross_lens.py) runs its hard-override
+  checks as plain, deterministic Python — fast, reliable, and testable
+  with zero AWS dependency. It CAN optionally also call a Bedrock
+  agent for subtler pattern-recognition checks if CROSS_LENS_AGENT_ID
+  is configured (see cross_lens.py's own _invoke_cross_lens_agent,
+  which reuses invoke_agent() below) — but the hard overrides that
+  matter most for Responsible AI never depend on a model call
+  succeeding.
+- Execution (notifications.py) sends a notification — this is a
+  deterministic ACTION, not a reasoning task, so it's plain Python
+  (or a real SES call), not an LLM invocation. Asking a language
+  model to "decide" whether to send an email is the wrong tool for
+  a deterministic action; save the model calls for genuine reasoning.
+
+This is a deliberate design principle worth being able to explain if
+asked: not every pipeline stage needs to be an AI call. The ones that
+require judgment (Intake's extraction, Policy Validation's coverage
+read, Adjudication's decision, and the OPTIONAL subtler half of
+Cross-Lens) go through Bedrock. The ones that are pure logic (hard
+override rules) or pure action (sending a notification) don't.
+"""
+
 import os
 import uuid
 import json

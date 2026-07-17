@@ -6,7 +6,13 @@ This guide provides step-by-step instructions for setting up the required AWS in
 
 ## 1. Database Setup: Amazon DynamoDB
 
-The FastAPI backend stores claim resolutions in a DynamoDB table with the partition key `ClaimID`.
+The FastAPI backend stores ONE record PER PIPELINE STAGE per claim
+(Intake, Policy Validation, Adjudication, Cross-Lens Reconciliation,
+Execution/Notification, Audit) — not a single combined record — so
+the table needs a partition key AND a sort key. See
+`backend/README.md`'s "Resilience & Audit Trail" section for why this
+matters (a claim that fails partway through still has every completed
+stage permanently recorded).
 
 ### Option A: Create via AWS CloudShell / CLI (Fastest)
 Run the following command in AWS CloudShell:
@@ -14,8 +20,12 @@ Run the following command in AWS CloudShell:
 ```bash
 aws dynamodb create-table \
     --table-name IntelliSureClaims \
-    --attribute-definitions AttributeName=ClaimID,AttributeType=S \
-    --key-schema AttributeName=ClaimID,KeyType=HASH \
+    --attribute-definitions \
+        AttributeName=ClaimID,AttributeType=S \
+        AttributeName=StageTimestamp,AttributeType=S \
+    --key-schema \
+        AttributeName=ClaimID,KeyType=HASH \
+        AttributeName=StageTimestamp,KeyType=RANGE \
     --billing-mode PAY_PER_REQUEST
 ```
 
@@ -24,6 +34,9 @@ aws dynamodb create-table \
 2. Click **Create table**.
 3. Set **Table name** to `IntelliSureClaims`.
 4. Set **Partition key** to **`ClaimID`** (String type, case-sensitive).
+5. Set **Sort key** to **`StageTimestamp`** (String type) — **do not
+   skip this**, it's what allows multiple stage records per claim
+   instead of overwriting a single record on every stage write.
 5. Leave other settings as default and click **Create table**.
 
 Once the table is active, set the environment variable:
@@ -72,49 +85,86 @@ aws bedrock-agent update-agent-alias \
 
 ---
 
-## 3. Deploy Backend to AWS App Runner
+## 3. Deploy Backend — ECR + CodeBuild + ECS Express Mode
 
-AWS App Runner provides a fully managed environment to run the containerized FastAPI backend.
+This is the intended deployment path for this project: **AWS CodeBuild**
+builds and pushes the container image (using `buildspec.yml` and
+`Dockerfile`, already in this repo), and **Amazon ECS Express Mode**
+runs it. Express Mode is the simplified ECS/Fargate deployment path —
+it provisions the load balancer, networking, and auto-scaling for you
+through a guided console flow, without hand-configuring a full ECS
+cluster/service/task-definition setup yourself. (App Runner steps are
+also included further below as a documented alternative, in case
+Express Mode's console flow has changed since this was written or
+isn't available in your account/region — same container image, either
+target works.)
 
-### Step 1: Push Container to Amazon ECR
-1. **Create an ECR repository**:
-   ```bash
-   aws ecr create-repository --repository-name intellisure-backend --region us-east-1
-   ```
-2. **Login to ECR** (Replace `<YOUR_ACCOUNT_ID>` with your actual AWS Account ID):
-   ```bash
-   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <YOUR_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
-   ```
-3. **Build the container image** from the project root:
-   ```bash
-   docker build -t intellisure-backend .
-   ```
-4. **Tag and Push the container**:
-   ```bash
-   docker tag intellisure-backend:latest <YOUR_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/intellisure-backend:latest
-   docker push <YOUR_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/intellisure-backend:latest
-   ```
+### Step 1: Set up CodeBuild to build and push to ECR
 
-### Step 2: Create the App Runner Service
-1. Open the **AWS App Runner** console and click **Create service**.
-2. Source: Select **Container registry** > **Amazon ECR**.
-3. Select your ECR image path: `intellisure-backend:latest`.
-4. Service configuration:
-   * **Port**: Change default to **`8000`** (matching FastAPI container port).
-   * **Environment variables**: Add all `.env` keys and values:
-     * `AWS_REGION`
-     * `BUCKET_NAME`
-     * `CLAIMS_TABLE`
-     * `CLAIM_AGENT_ID` & `CLAIM_AGENT_ALIAS`
-     * `POLICY_AGENT_ID` & `POLICY_AGENT_ALIAS`
-     * `ADJUDICATION_AGENT_ID` & `ADJUDICATION_AGENT_ALIAS`
-     * `AUDIT_AGENT_ID` & `AUDIT_AGENT_ALIAS`
-5. Security IAM Instance Role:
-   Ensure the role attached to App Runner has permissions to read/write to your resources:
-   * `AmazonS3FullAccess`
-   * `AmazonDynamoDBFullAccess`
-   * `AmazonBedrockFullAccess`
-6. Click **Create & Deploy**. App Runner will generate a public URL (e.g. `https://xxxxxx.us-east-1.awsapprunner.com`).
+1. **Create the ECR repository** (matches `buildspec.yml`'s
+   `IMAGE_REPO_NAME: claims_app` — keep these in sync, or update
+   `buildspec.yml` if you name it differently):
+   ```bash
+   aws ecr create-repository --repository-name claims_app --region us-east-1
+   ```
+2. **Create a CodeBuild project** pointing at your GitHub repo:
+   - Console → CodeBuild → **Create build project**
+   - Source: **GitHub**, connect your repo, select your branch
+   - Environment: **Managed image**, Ubuntu, standard runtime, and
+     check **"Privileged"** (required — this project builds a Docker
+     image, which needs privileged mode to run the Docker daemon
+     inside the build container)
+   - Buildspec: **Use a buildspec file** — it will automatically find
+     `buildspec.yml` at the repo root
+   - Service role: let CodeBuild create a new one, then add ECR push
+     permissions (`AmazonEC2ContainerRegistryPowerUser` is the
+     simplest managed policy for this)
+3. **Run the build** — Console → your CodeBuild project → **Start
+   build**. Watch the logs; on success, your image is now in ECR,
+   tagged `latest`.
+4. **(Optional) Automate this on every push** — CodeBuild → your
+   project → Edit → Source → add a **webhook** triggering on push to
+   your branch, so every commit automatically rebuilds and re-pushes
+   the image without you running this manually each time.
+
+### Step 2: Deploy to ECS Express Mode
+
+1. Console → **Elastic Container Service** → look for the **Express
+   Mode** / "Create an application" guided flow (this is a newer,
+   simplified ECS onboarding path — if your console shows a different
+   label than expected, look for "Deploy a container application" or
+   similar guided wizard; the underlying steps below are the same
+   regardless of exact wording)
+2. **Container image**: select your ECR repository (`claims_app:latest`)
+3. **Port**: `8000` (matches `Dockerfile`'s `EXPOSE 8000` and the
+   `uvicorn` command's port)
+4. **Environment variables**: add every key from `backend/README.md`'s
+   Environment Variables section — `AWS_REGION`, `BUCKET_NAME`,
+   `CLAIMS_TABLE`, all four agent ID/alias pairs, and the newer
+   optional ones (`CROSS_LENS_AGENT_ID`, `SES_ENABLED`, etc.) if you're
+   using them
+5. **IAM permissions**: the task role needs read/write access to your
+   S3 bucket, DynamoDB table, and `bedrock:InvokeAgent` /
+   `bedrock:Retrieve` — scope a custom policy to your specific
+   resources rather than attaching `AmazonS3FullAccess` /
+   `AmazonDynamoDBFullAccess` / `AmazonBedrockFullAccess` if you have
+   time; the broad managed policies work but are not least-privilege
+   (worth naming as a known shortcut if a judge asks about IAM scoping)
+6. Deploy — Express Mode provisions the load balancer and gives you a
+   public URL once healthy. Test it: `curl https://<your-url>/health`
+
+### Alternative: AWS App Runner (same container image)
+
+If Express Mode isn't available or you hit friction with it:
+
+1. Console → **App Runner** → **Create service**
+2. Source: **Container registry** → **Amazon ECR** → select
+   `claims_app:latest`
+3. Port: `8000`
+4. Add the same environment variables as Step 2 above
+5. Same IAM scoping note applies to App Runner's instance role
+6. **Create & Deploy** — App Runner generates a public URL
+   (`https://xxxxxx.us-east-1.awsapprunner.com`)
 
 ---
 
