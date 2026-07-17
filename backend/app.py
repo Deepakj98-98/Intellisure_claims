@@ -65,6 +65,7 @@ show for it.
 """
 
 import os
+import json
 import logging
 import asyncio
 from contextlib import asynccontextmanager
@@ -183,7 +184,7 @@ async def run_claim_pipeline(claim_id: str, filename: str, file_bytes: bytes) ->
 
     # ---- Stage 4: Cross-Lens Reconciliation (THE differentiator) ----
     try:
-        reconciliation = reconcile(claim_json, policy_json, decision_json)
+        reconciliation = reconcile(claim_json, policy_json, decision_json, session_id=claim_id)
         save_claim_stage(claim_id, "CROSS_LENS_RECONCILIATION", reconciliation,
                           status="DISAGREEMENT_FOUND" if reconciliation["disagreement_found"] else "CONSISTENT")
         stage_results["cross_lens"] = reconciliation
@@ -231,7 +232,7 @@ async def run_claim_pipeline(claim_id: str, filename: str, file_bytes: bytes) ->
             "claim": claim_json, "policy": policy_json, "decision": decision_json,
             "cross_lens": reconciliation, "routing_decision": routing_decision,
         }
-        audit_raw = invoke_audit(str(full_trail_summary), claim_id)
+        audit_raw = invoke_audit(json.dumps(full_trail_summary, default=str), claim_id)
         audit_json = parse_json_response(audit_raw)
         save_claim_stage(claim_id, "AUDIT", audit_json, status="SUCCESS")
         stage_results["audit"] = audit_json
