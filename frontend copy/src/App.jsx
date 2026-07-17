@@ -639,23 +639,48 @@ export default function App() {
                     <pre className="text-xs font-mono bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-emerald-400 overflow-x-auto whitespace-pre-wrap">
                       {JSON.stringify(results.cross_lens, null, 2)}
                     </pre>
-                  ) : results.cross_lens?.disagreement_found ? (
-                    <ul className="space-y-3">
-                      {(results.cross_lens.disagreement_reasons || []).map((reason, idx) => (
-                        <li key={idx} className="text-sm text-rose-300 bg-rose-500/5 border border-rose-500/10 rounded-lg p-3">
-                          {reason}
-                        </li>
-                      ))}
-                    </ul>
                   ) : (
-                    <div className="text-sm text-slate-400">
-                      <p className="mb-2">No contradictions found across the following checks:</p>
-                      <ul className="list-disc list-inside space-y-1 text-slate-500">
-                        {(results.cross_lens?.checks_performed || []).map((check, idx) => (
-                          <li key={idx}>{check.replace(/_/g, ' ')}</li>
-                        ))}
-                      </ul>
-                    </div>
+                    <>
+                      {results.cross_lens?.disagreement_found ? (
+                        <ul className="space-y-3">
+                          {(results.cross_lens.disagreement_reasons || []).map((reason, idx) => (
+                            <li key={idx} className="text-sm text-rose-300 bg-rose-500/5 border border-rose-500/10 rounded-lg p-3">
+                              {reason}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="text-sm text-slate-400">
+                          <p className="mb-2">No contradictions found across the following checks:</p>
+                          <ul className="list-disc list-inside space-y-1 text-slate-500">
+                            {(results.cross_lens?.checks_performed || []).map((check, idx) => (
+                              <li key={idx}>{check.replace(/_/g, ' ')}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* agent_commentary is only present when
+                          CROSS_LENS_AGENT_ID is configured — i.e. the
+                          optional Bedrock reasoning layer ran on top of
+                          the deterministic checks above. Shown in its
+                          own distinct box so it's clear this came from
+                          a second, subtler reasoning pass, not the
+                          hard-override rules. */}
+                      {results.cross_lens?.agent_commentary && (
+                        <div className="mt-4 pt-4 border-t border-slate-800">
+                          <p className="text-xs text-violet-400 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                            </svg>
+                            Cross-Lens Agent commentary
+                          </p>
+                          <p className="text-sm text-slate-300 bg-violet-500/5 border border-violet-500/10 rounded-lg p-3">
+                            {results.cross_lens.agent_commentary}
+                          </p>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

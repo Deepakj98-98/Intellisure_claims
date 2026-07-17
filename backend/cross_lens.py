@@ -40,17 +40,14 @@ training knowledge.
 
 import json
 import logging
-import os
 from pathlib import Path
 
 from guardrails import redact_pii
+from bedrock import CROSS_LENS_AGENT_ID, CROSS_LENS_AGENT_ALIAS  # single source of truth lives in bedrock.py — see that module's docstring
 
 logger = logging.getLogger(__name__)
 
 KB_DIR = Path(__file__).resolve().parent / "knowledge_base"
-
-CROSS_LENS_AGENT_ID = os.getenv("CROSS_LENS_AGENT_ID")     # optional — see module docstring
-CROSS_LENS_AGENT_ALIAS = os.getenv("CROSS_LENS_AGENT_ALIAS")
 
 
 def _load_knowledge_base() -> dict:
@@ -93,7 +90,7 @@ def _load_knowledge_base() -> dict:
 _KB = _load_knowledge_base()
 
 
-def reconcile(claim_json: dict, policy_json: dict, adjudication_json: dict) -> dict:
+def reconcile(claim_json: dict, policy_json: dict, adjudication_json: dict, session_id: str = None) -> dict:
     """The main entry point. Runs all deterministic hard-override
     checks, then (if configured) layers in a Bedrock agent's reasoning,
     and returns a single reconciliation verdict the rest of the
@@ -106,6 +103,12 @@ def reconcile(claim_json: dict, policy_json: dict, adjudication_json: dict) -> d
                      (coverage determination)
         adjudication_json: Adjudication Agent's structured output
                             (approve/deny/exception decision)
+        session_id: the SAME session_id used for this claim's other
+                    agent calls (app.py passes claim_id) — kept
+                    consistent across every agent so Bedrock's session
+                    memory, if the agent uses it, has full context.
+                    Optional: if not provided, invoke_cross_lens()
+                    generates a fresh one (see bedrock.py's invoke_agent).
 
     Returns:
         {
@@ -200,7 +203,7 @@ def reconcile(claim_json: dict, policy_json: dict, adjudication_json: dict) -> d
     # -----------------------------------------------------------------
     if CROSS_LENS_AGENT_ID and CROSS_LENS_AGENT_ALIAS:
         try:
-            agent_finding = _invoke_cross_lens_agent(claim_json, policy_json, adjudication_json)
+            agent_finding = _invoke_cross_lens_agent(claim_json, policy_json, adjudication_json, session_id)
             result["agent_commentary"] = agent_finding.get("commentary")
             if agent_finding.get("additional_disagreement_found"):
                 result["disagreement_found"] = True
@@ -221,29 +224,33 @@ def reconcile(claim_json: dict, policy_json: dict, adjudication_json: dict) -> d
     return result
 
 
-def _invoke_cross_lens_agent(claim_json: dict, policy_json: dict, adjudication_json: dict) -> dict:
-    """Calls an actual Bedrock Agent for the subtler, pattern-recognition
-    half of cross-lens reasoning. Only called if CROSS_LENS_AGENT_ID is
-    configured — see bedrock.py's invoke_agent() for the underlying
-    boto3 call this wraps."""
-    from bedrock import invoke_agent, parse_json_response
+def _invoke_cross_lens_agent(claim_json: dict, policy_json: dict, adjudication_json: dict, session_id: str = None) -> dict:
+    """Calls the actual Bedrock Agent for the subtler, pattern-recognition
+    half of cross-lens reasoning, via bedrock.py's invoke_cross_lens()
+    wrapper — see that function's docstring for the exact call shape.
 
-    prompt = (
-        "You are the Cross-Lens Reconciliation Agent for CGI IntelliSure AI. "
-        "Deterministic hard-override rules have already been checked separately — "
-        "your job is to look for SUBTLER contradictions those rules don't cover, "
-        "such as a diagnosis code that doesn't clinically support the billed procedure code, "
-        "or an internal inconsistency between the claim, policy, and adjudication data below "
-        "that a rule-based check wouldn't catch.\n\n"
-        f"Claim: {json.dumps(claim_json)}\n"
-        f"Policy Validation output: {json.dumps(policy_json)}\n"
-        f"Adjudication output: {json.dumps(adjudication_json)}\n\n"
-        f"Reference — policy coverage schedule:\n{_KB['policy_text']}\n\n"
-        "Respond with ONLY this JSON shape:\n"
-        '{"additional_disagreement_found": false, "reason": null, "commentary": "brief plain-language note"}'
+    IMPORTANT: this function sends only the claim/policy/adjudication
+    DATA — the reasoning instructions themselves live in the Bedrock
+    Agent's own console configuration ("Instructions for the Agent"),
+    not duplicated here in Python. If you ever need to see or edit
+    what the Cross-Lens Agent is being told to do, that's in the
+    Bedrock console, not in this file. Keeping the data and the
+    instructions in separate places (rather than rebuilding a giant
+    prompt string here) is what makes the agent's behavior editable
+    without a code deploy — a prompt tweak is a console change, not a
+    pull request.
+
+    Only called if CROSS_LENS_AGENT_ID is configured (see reconcile()
+    above) — this function itself doesn't check that, callers must.
+    """
+    from bedrock import invoke_cross_lens, parse_json_response
+
+    raw = invoke_cross_lens(
+        claim_json=json.dumps(claim_json, default=str),
+        policy_json=json.dumps(policy_json, default=str),
+        adjudication_json=json.dumps(adjudication_json, default=str),
+        session_id=session_id,
     )
-
-    raw = invoke_agent(CROSS_LENS_AGENT_ID, CROSS_LENS_AGENT_ALIAS, prompt)
     return parse_json_response(raw)
 
 
