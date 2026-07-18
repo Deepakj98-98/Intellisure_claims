@@ -36,6 +36,7 @@ import uuid
 import json
 import logging
 import boto3
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -228,31 +229,55 @@ def invoke_audit(decision_json: str, session_id: str) -> str:
     logger.info("Triggering Audit Agent...")
     return invoke_agent(AUDIT_AGENT_ID, AUDIT_AGENT_ALIAS, decision_json, session_id)
 
+# def parse_json_response(text: str) -> dict:
+#     """
+#     Cleans markdown wrappers and parses Bedrock response text into a JSON/dictionary structure.
+    
+#     Args:
+#         text (str): Raw string response from Bedrock Agent.
+        
+#     Returns:
+#         dict: Parsed JSON content or a wrapper dict if parsing fails.
+#     """
+    # cleaned = text.strip()
+    
+    # # Remove markdown codeblock tags if the agent returned them
+    # if cleaned.startswith("```json"):
+    #     cleaned = cleaned[7:]
+    # elif cleaned.startswith("```"):
+    #     cleaned = cleaned[3:]
+        
+    # if cleaned.endswith("```"):
+    #     cleaned = cleaned[:-3]
+        
+    # cleaned = cleaned.strip()
+    
+    # try:
+    #     return json.loads(cleaned)
+    # except json.JSONDecodeError:
+    #     logger.warning("Failed to parse agent response as JSON. Returning raw text wrapped in dict.")
+    #     return {"raw_text": text}
+
+    
+
 def parse_json_response(text: str) -> dict:
     """
     Cleans markdown wrappers and parses Bedrock response text into a JSON/dictionary structure.
-    
-    Args:
-        text (str): Raw string response from Bedrock Agent.
-        
-    Returns:
-        dict: Parsed JSON content or a wrapper dict if parsing fails.
     """
     cleaned = text.strip()
-    
-    # Remove markdown codeblock tags if the agent returned them
-    if cleaned.startswith("```json"):
+
+    if cleaned.startswith("json"):
         cleaned = cleaned[7:]
-    elif cleaned.startswith("```"):
+    elif cleaned.startswith(""):
         cleaned = cleaned[3:]
-        
+
     if cleaned.endswith("```"):
         cleaned = cleaned[:-3]
-        
+
     cleaned = cleaned.strip()
-    
+
     try:
-        return json.loads(cleaned)
+        return json.loads(cleaned, parse_float=Decimal)
     except json.JSONDecodeError:
         logger.warning("Failed to parse agent response as JSON. Returning raw text wrapped in dict.")
         return {"raw_text": text}
