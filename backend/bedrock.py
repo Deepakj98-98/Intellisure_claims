@@ -59,6 +59,8 @@ AUDIT_AGENT_ALIAS = os.getenv("AUDIT_AGENT_ALIAS")
 # Initialize Bedrock Agent Runtime client
 try:
     bedrock_agent_client = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
+    sts = boto3.client("sts")
+    logger.info("Caller Identity: %s", sts.get_caller_identity())
 except Exception as e:
     logger.error(f"Failed to initialize Bedrock Agent Runtime client: {str(e)}")
     bedrock_agent_client = None
