@@ -144,7 +144,7 @@ def save_claim_stage(claim_id: str, stage: str, data: dict, status: str = None) 
         item["StageStatus"] = status
 
     try:
-	item = convert_floats(item)
+        item = convert_floats(item)
         table.put_item(Item=item)
         logger.info(f"Saved stage record: claim={claim_id}, stage={stage}, status={status or 'n/a'}")
         return item
